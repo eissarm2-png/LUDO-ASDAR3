@@ -1,0 +1,6 @@
+{
+  "name": "عبقور لودو | ABQOR LUDO",
+  "description": "لعبة لودو عربية ملكية كاملة: غرف خاصة، نرد ملكي، بطولات، مكافآت، وتحميل مباشر بصيغة APK وأندرويد",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

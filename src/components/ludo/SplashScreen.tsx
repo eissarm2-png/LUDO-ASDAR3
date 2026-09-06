@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Crown, Sparkles, Star } from "lucide-react";
 import diceRoyal from "@/assets/dice-royal.png";
-import brandMark from "@/assets/brand-mark.png";
+import { AnimatedRoyalDice } from "./AnimatedRoyalDice";
 
 /**
  * شاشة الترحيب والتحميل الملكية الحصرية لتطبيق عبقور لودو
@@ -127,7 +127,7 @@ export function SplashScreen({ onDone }: { onDone: () => void }) {
           </div>
 
           <div className="flex items-center justify-center gap-2">
-            <img src={brandMark} alt="عبقور" className="size-5 object-contain" />
+            <AnimatedRoyalDice size="xs" showCrown={false} showGlow={false} />
             <h2 className="text-sm sm:text-base font-bold text-pink-200 tracking-wider">
               عبقور لودو الملكية | ABQOR LUDO
             </h2>

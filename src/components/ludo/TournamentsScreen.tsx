@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertCircle,
+  Award,
   CheckCircle2,
   ChevronLeft,
   Clock,
@@ -21,6 +22,13 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { sfx } from "@/lib/audio";
 import { cn } from "@/lib/utils";
+import {
+  loadUserTournamentData,
+  registerUserInTournament,
+  getRoundName,
+  type UserTournamentData,
+  type TournamentRound,
+} from "@/lib/tournament-manager";
 
 export type Tournament = {
   id: string;
@@ -106,19 +114,20 @@ export function TournamentsScreen({
   onStartTournamentMatch,
 }: {
   onBack: () => void;
-  onStartTournamentMatch?: (t: Tournament) => void;
+  onStartTournamentMatch?: (t: Tournament, round: TournamentRound) => void;
 }) {
   const { user, profile, refreshProfile } = useAuth();
   const [selectedTourney, setSelectedTourney] = useState<Tournament | null>(null);
-  const [registeredIds, setRegisteredIds] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem("ludo_registered_tournaments");
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [userTourneyData, setUserTourneyData] = useState<UserTournamentData>(() =>
+    loadUserTournamentData(user?.id),
+  );
   const [registering, setRegistering] = useState(false);
+
+  useEffect(() => {
+    setUserTourneyData(loadUserTournamentData(user?.id));
+  }, [user?.id]);
+
+  const registeredIds = userTourneyData.registeredIds;
 
   const handleRegister = async (t: Tournament) => {
     if (registeredIds.includes(t.id)) {
@@ -142,12 +151,11 @@ export function TournamentsScreen({
         await refreshProfile();
       }
 
-      const updated = [...registeredIds, t.id];
-      setRegisteredIds(updated);
-      localStorage.setItem("ludo_registered_tournaments", JSON.stringify(updated));
+      const updated = registerUserInTournament(user?.id, t.id);
+      setUserTourneyData(updated);
 
       sfx.win();
-      toast.success(`تم تسجيلك بنجاح في ${t.name}! تم خصم ${t.entryFee} ذهب 🏆`);
+      toast.success(`تم تسجيلك وحفظ مقعدك في ${t.name}! تم خصم ${t.entryFee} ذهب 🏆`);
     } catch {
       toast.error("تعذر إتمام التسجيل، حاول مجدداً");
     } finally {
@@ -187,6 +195,72 @@ export function TournamentsScreen({
         </div>
       </section>
 
+      {/* سجل إنجازات وبطولات المستخدم المحفوظة */}
+      <section className="rounded-2xl border border-ludo-gold/40 bg-black/40 p-3 shadow-md space-y-2.5">
+        <div className="flex items-center justify-between">
+          <h4 className="text-xs font-black text-ludo-gold flex items-center gap-1.5">
+            <Medal className="size-4 text-ludo-gold" /> سجلك المحفوظ في البطولات
+          </h4>
+          <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/30">
+            حفظ تلقائي دائم
+          </span>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 text-center text-xs">
+          <div className="rounded-xl border border-ludo-gold/30 bg-ludo-gold/10 p-2">
+            <span className="text-[10px] text-ludo-soft block">كؤوس البطولات</span>
+            <b className="text-base font-black text-ludo-gold mt-0.5 block flex items-center justify-center gap-1">
+              🏆 {userTourneyData.trophies.length}
+            </b>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/5 p-2">
+            <span className="text-[10px] text-ludo-soft block">بطولات شاركت بها</span>
+            <b className="text-base font-black text-white mt-0.5 block">
+              {userTourneyData.stats.tournamentsPlayed}
+            </b>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/5 p-2">
+            <span className="text-[10px] text-ludo-soft block">أرباحك من البطولات</span>
+            <b className="text-xs font-black text-amber-300 mt-1 block truncate">
+              {userTourneyData.stats.totalGoldWon.toLocaleString("ar-EG")} 🪙
+            </b>
+          </div>
+        </div>
+
+        {/* خزانة الكؤوس */}
+        {userTourneyData.trophies.length > 0 ? (
+          <div className="pt-1">
+            <h5 className="text-[11px] font-bold text-ludo-soft mb-1.5 flex items-center gap-1">
+              <Sparkles className="size-3 text-ludo-gold" /> خزانة الكؤوس المحفوظة:
+            </h5>
+            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+              {userTourneyData.trophies.map((tr) => (
+                <div
+                  key={tr.id}
+                  className="shrink-0 flex items-center gap-2 rounded-xl border border-ludo-gold/50 bg-gradient-to-r from-amber-500/20 to-ludo-purple/30 px-2.5 py-1.5"
+                >
+                  <span className="text-xl">🏆</span>
+                  <div className="text-right">
+                    <b className="text-xs font-bold text-ludo-gold block truncate max-w-[130px]">
+                      {tr.tournamentName}
+                    </b>
+                    <span className="text-[9px] text-emerald-300 font-bold block">
+                      +{tr.prizeGold.toLocaleString("ar-EG")} 🪙
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="text-center py-2 px-3 rounded-xl border border-white/5 bg-white/[0.02]">
+            <p className="text-[11px] text-ludo-soft">
+              شارك في البطولات أدناه وتوج بطلاً لتُحفظ كؤوسك وجوائزك هنا في خزانتك الملكية!
+            </p>
+          </div>
+        )}
+      </section>
+
       {/* قائمة البطولات النشطة */}
       <section className="space-y-3">
         <h4 className="text-sm font-black text-ludo-gold flex items-center gap-1.5 px-1">
@@ -196,6 +270,10 @@ export function TournamentsScreen({
         <div className="space-y-2.5">
           {TOURNAMENTS.map((t) => {
             const isRegistered = registeredIds.includes(t.id);
+            const prog = userTourneyData.progress[t.id];
+            const currentRound: TournamentRound = prog?.round || "quarter";
+            const roundLabel = getRoundName(currentRound);
+
             return (
               <div
                 key={t.id}
@@ -216,7 +294,7 @@ export function TournamentsScreen({
                         <b className="truncate text-sm font-bold text-white">{t.name}</b>
                         {isRegistered && (
                           <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/50 px-2 py-0.5 text-[9px] font-black text-emerald-300">
-                            <CheckCircle2 className="size-3" /> مسجل
+                            <CheckCircle2 className="size-3" /> {roundLabel}
                           </span>
                         )}
                       </div>
@@ -244,7 +322,7 @@ export function TournamentsScreen({
                       onClick={() => setSelectedTourney(t)}
                       className="text-xs font-bold px-3 shadow"
                     >
-                      {isRegistered ? "تفاصيل البطولة" : "انضمام (تفاصيل)"}
+                      {isRegistered ? "متابعة البطولة" : "انضمام (تفاصيل)"}
                     </Button>
                   </div>
                 </div>
@@ -341,12 +419,18 @@ export function TournamentsScreen({
                       variant="play"
                       size="xl"
                       onClick={() => {
-                        onStartTournamentMatch(selectedTourney);
+                        const prog = userTourneyData.progress[selectedTourney.id];
+                        const r: TournamentRound = prog?.round || "quarter";
+                        onStartTournamentMatch(selectedTourney, r);
                         setSelectedTourney(null);
                       }}
                       className="w-full text-base font-black shadow-lg"
                     >
-                      <Swords className="size-5 ml-1" /> بدء جولة المنافسة الآن 🎲
+                      <Swords className="size-5 ml-1" /> خوض{" "}
+                      {getRoundName(
+                        userTourneyData.progress[selectedTourney.id]?.round || "quarter",
+                      )}{" "}
+                      🎲
                     </Button>
                   )}
                 </div>

@@ -19,34 +19,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { sfx } from "@/lib/audio";
 import { cn } from "@/lib/utils";
-
-type DailyReward = {
-  day: number;
-  label: string;
-  gold: number;
-  diamonds: number;
-  xp: number;
-  icon: string;
-  isSpecial?: boolean;
-};
-
-const DAILY_REWARDS: DailyReward[] = [
-  { day: 1, label: "اليوم الأول", gold: 500, diamonds: 0, xp: 20, icon: "🪙" },
-  { day: 2, label: "اليوم الثاني", gold: 1000, diamonds: 10, xp: 30, icon: "🪙" },
-  { day: 3, label: "اليوم الثالث", gold: 1500, diamonds: 30, xp: 40, icon: "💎" },
-  { day: 4, label: "اليوم الرابع", gold: 2000, diamonds: 40, xp: 50, icon: "🎁" },
-  { day: 5, label: "اليوم الخامس", gold: 3000, diamonds: 60, xp: 60, icon: "💎" },
-  { day: 6, label: "اليوم السادس", gold: 4000, diamonds: 80, xp: 80, icon: "⭐" },
-  {
-    day: 7,
-    label: "الجائزة الملكية",
-    gold: 6000,
-    diamonds: 150,
-    xp: 150,
-    icon: "👑",
-    isSpecial: true,
-  },
-];
+import { DAILY_REWARDS, type DailyRewardItem as DailyReward } from "@/lib/daily-reward";
 
 const SPIN_PRIZES = [
   { label: "300 ذهب", gold: 300, diamonds: 0, icon: "🪙", color: "from-amber-500 to-yellow-600" },
@@ -96,6 +69,20 @@ export function RewardsScreen({ onBack }: { onBack: () => void }) {
     const today = new Date().toDateString();
     return lastDate === today;
   });
+
+  // مزامنة حالة المكافأة مع أي شاشة أو نافذة منبثقة أخرى
+  useEffect(() => {
+    const syncDaily = () => {
+      const s = localStorage.getItem(streakKey);
+      if (s) setCurrentStreak(Math.max(1, Math.min(7, parseInt(s, 10))));
+      const last = localStorage.getItem(lastClaimKey);
+      if (last) {
+        setHasClaimedToday(new Date(last).toDateString() === new Date().toDateString());
+      }
+    };
+    window.addEventListener("daily_reward_claimed", syncDaily);
+    return () => window.removeEventListener("daily_reward_claimed", syncDaily);
+  }, [streakKey, lastClaimKey]);
 
   const [spinCooldown, setSpinCooldown] = useState<number>(0);
   const [bonusCooldown, setBonusCooldown] = useState<number>(0);
@@ -162,6 +149,12 @@ export function RewardsScreen({ onBack }: { onBack: () => void }) {
       const nextStreak = currentStreak >= 7 ? 1 : currentStreak + 1;
       localStorage.setItem(streakKey, nextStreak.toString());
       setCurrentStreak(nextStreak);
+
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("daily_reward_claimed", { detail: { reward, nextStreak } }),
+        );
+      }
 
       sfx.win();
       toast.success(

@@ -12,6 +12,7 @@ import {
   Pencil,
   Save,
   Shield,
+  ShoppingBag,
   Sparkles,
   Swords,
   Target,
@@ -19,6 +20,7 @@ import {
   Upload,
   User,
   Users,
+  Wand2,
   X,
 } from "lucide-react";
 import { useServerFn } from "@tanstack/react-start";
@@ -29,6 +31,9 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchChestOpenings, type OwnedItem } from "@/lib/economy.functions";
 import { ITEM_KIND_LABEL, RarityChip, itemArt } from "./economy-visuals";
+import { AVATAR_FRAMES, RARITY_LABELS, markAllFramesSeen } from "@/lib/avatar-frames";
+import { AvatarFrame } from "./AvatarFrame";
+import { AvatarGenerator } from "./AvatarGenerator";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_EMOJI_AVATARS = ["🦁", "🐯", "🦅", "🐺", "🐲", "🦉", "🐧", "🐵", "👑", "⚡"];
@@ -126,14 +131,23 @@ function StatBox({ label, value, sub }: { label: string; value: string | number;
   );
 }
 
-export function ProfileScreen({ onHistory }: { onHistory: () => void }) {
-  const { user, profile, refreshProfile } = useAuth();
+export function ProfileScreen({
+  onHistory,
+  onGoToStore,
+}: {
+  onHistory: () => void;
+  onGoToStore?: () => void;
+}) {
+  const { user, profile, refreshProfile, updateProfileLocally } = useAuth();
   const loadItems = useServerFn(fetchChestOpenings);
   const [items, setItems] = useState<OwnedItem[]>([]);
   const [editing, setEditing] = useState(false);
+  const [showAvatarGenerator, setShowAvatarGenerator] = useState(false);
   const [name, setName] = useState(profile?.display_name ?? "");
   const [avatar, setAvatar] = useState(profile?.avatar ?? "🦁");
+  const [selectedFrame, setSelectedFrame] = useState(profile?.frame || "frame_default");
   const [saving, setSaving] = useState(false);
+  const [equippingFrame, setEquippingFrame] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [topRivals, setTopRivals] = useState<
     Array<{ id: string; display_name: string; avatar: string; points: number; wins: number }>
@@ -144,7 +158,26 @@ export function ProfileScreen({ onHistory }: { onHistory: () => void }) {
   useEffect(() => {
     setName(profile?.display_name ?? "");
     setAvatar(profile?.avatar || "🦁");
-  }, [profile?.display_name, profile?.avatar]);
+    setSelectedFrame(profile?.frame || "frame_default");
+  }, [profile?.display_name, profile?.avatar, profile?.frame]);
+
+  // قائمة الإطارات المملوكة
+  const ownedFrameCodes = useMemo(() => {
+    const set = new Set<string>(["frame_default"]);
+    if (profile?.frame) set.add(profile.frame);
+    items.filter((i) => i.kind === "frame").forEach((i) => set.add(i.code));
+
+    try {
+      const raw = localStorage.getItem("ludo_local_owned_frames");
+      if (raw) {
+        const list: string[] = JSON.parse(raw);
+        list.forEach((c) => set.add(c));
+      }
+    } catch {
+      // ignore
+    }
+    return set;
+  }, [profile?.frame, items]);
 
   // Load owned items
   useEffect(() => {
@@ -319,16 +352,17 @@ export function ProfileScreen({ onHistory }: { onHistory: () => void }) {
       return;
     }
     setSaving(true);
+    updateProfileLocally({ display_name: clean, avatar, frame: selectedFrame });
     const { error } = await supabase
       .from("profiles")
-      .update({ display_name: clean, avatar })
+      .update({ display_name: clean, avatar, frame: selectedFrame })
       .eq("id", user.id);
     setSaving(false);
     if (error) {
       toast.error("تعذّر حفظ الملف، حاول مرة أخرى");
       return;
     }
-    toast.success("تم تحديث الملف الشخصي والصورة بنجاح! 👑");
+    toast.success("تم تحديث الملف الشخصي والصورة والإطار بنجاح! 👑");
     setEditing(false);
     await refreshProfile();
   };
@@ -382,16 +416,14 @@ export function ProfileScreen({ onHistory }: { onHistory: () => void }) {
         )}
 
         <div className="flex items-center gap-3.5">
-          {/* دائرة الصورة الشخصية مع زر التغيير والرفع */}
+          {/* دائرة الصورة الشخصية مع إطارها المختار وزر التغيير والرفع */}
           <div className="relative group shrink-0">
-            <div
-              className={cn(
-                "relative grid size-20 place-items-center rounded-full border-2 bg-gradient-to-br from-[#681954] to-[#1e051d] shadow-[0_0_15px_rgba(255,215,0,0.3)] overflow-hidden",
-                rank.border,
-              )}
-            >
-              {renderAvatarContent(profile.avatar || "🦁")}
-            </div>
+            <AvatarFrame
+              frameId={profile.frame}
+              avatar={profile.avatar || "🦁"}
+              size="xl"
+              showBadge
+            />
 
             <button
               type="button"
@@ -400,7 +432,7 @@ export function ProfileScreen({ onHistory }: { onHistory: () => void }) {
                 fileInputRef.current?.click();
               }}
               title="تغيير الصورة من جهازك"
-              className="absolute -bottom-1 -left-1 grid size-7 place-items-center rounded-full border border-ludo-gold bg-[#8d2a72] text-white shadow-md transition hover:scale-110 active:scale-95"
+              className="absolute -bottom-1 -left-1 z-10 grid size-7 place-items-center rounded-full border border-ludo-gold bg-[#8d2a72] text-white shadow-md transition hover:scale-110 active:scale-95"
             >
               <Camera className="size-3.5" />
             </button>
@@ -519,6 +551,35 @@ export function ProfileScreen({ onHistory }: { onHistory: () => void }) {
             </div>
           </div>
 
+          {/* صانع ومُولّد الشخصيات المخصص */}
+          <div className="pt-1">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowAvatarGenerator((v) => !v)}
+              className="w-full flex items-center justify-center gap-2 text-xs font-bold border-amber-400/50 bg-gradient-to-r from-amber-500/20 via-purple-500/20 to-pink-500/20 text-ludo-gold hover:text-white"
+            >
+              <Wand2 className="size-4 text-amber-300 animate-pulse" />
+              {showAvatarGenerator
+                ? "إغلاق صانع الشخصيات"
+                : "صمّم شخصيتك المخصصة (ألوان، عيون، تعابير) 🎨"}
+            </Button>
+          </div>
+
+          {showAvatarGenerator && (
+            <div className="rounded-xl border border-amber-400/40 bg-black/40 p-2">
+              <AvatarGenerator
+                currentFrame={selectedFrame}
+                onSelectAvatar={(val) => {
+                  setAvatar(val);
+                  setShowAvatarGenerator(false);
+                  toast.success("تم تطبيق شخصيتك الجديدة! اضغط حفظ التغييرات لتأكيدها");
+                }}
+                onClose={() => setShowAvatarGenerator(false)}
+              />
+            </div>
+          )}
+
           {/* أو الاختيار من الأيقونات الجاهزة */}
           <div className="space-y-1">
             <span className="text-[11px] text-ludo-soft">أو اختر رمزاً تعبيرياً سريعاً:</span>
@@ -588,6 +649,120 @@ export function ProfileScreen({ onHistory }: { onHistory: () => void }) {
         />
         <StatBox label="الخسائر" value={profile.losses} sub="مباريات خاسرة" />
       </div>
+
+      {/* قسم إطارات الأيقونة الشخصية */}
+      <section className="rounded-2xl border border-ludo-gold/40 bg-gradient-to-b from-[#2e092b] to-[#150214] p-3.5 space-y-3">
+        <div className="flex items-center justify-between border-b border-ludo-gold/20 pb-2">
+          <div className="flex items-center gap-2">
+            <Sparkles className="size-4 text-ludo-gold" />
+            <h4 className="text-sm font-black text-ludo-gold">
+              إطارات الأيقونة الشخصية (خزانة الإطارات)
+            </h4>
+          </div>
+          {onGoToStore && (
+            <Button
+              size="sm"
+              variant="ghostGold"
+              onClick={onGoToStore}
+              className="h-7 text-[11px] gap-1 px-2.5 text-ludo-gold hover:text-white"
+            >
+              <ShoppingBag className="size-3" /> متجر الإطارات
+            </Button>
+          )}
+        </div>
+
+        <p className="text-[11px] text-ludo-soft">
+          اختر إطاراً لتزيين صورتك الشخصية والظهور بمظهر ملكي أثناء اللعب وفي قوائم الصدارة:
+        </p>
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {AVATAR_FRAMES.map((f) => {
+            const isEquipped = (profile?.frame || "frame_default") === f.code;
+            const isOwned = ownedFrameCodes.has(f.code);
+            const rarity = RARITY_LABELS[f.rarity] || RARITY_LABELS.common;
+
+            return (
+              <div
+                key={f.code}
+                className={cn(
+                  "relative flex flex-col items-center justify-between rounded-xl border p-2.5 text-center transition",
+                  isEquipped
+                    ? "border-amber-400 bg-amber-500/15 shadow-[0_0_12px_rgba(251,191,36,0.25)]"
+                    : isOwned
+                      ? "border-ludo-gold/40 bg-black/30 hover:border-ludo-gold/70"
+                      : "border-white/10 bg-black/40 opacity-75 hover:opacity-100",
+                )}
+              >
+                <span
+                  className={cn(
+                    "self-start mb-1 rounded-full border px-1.5 py-0.5 text-[8px] font-black uppercase",
+                    rarity.bg,
+                    rarity.color,
+                  )}
+                >
+                  {rarity.label}
+                </span>
+
+                <div className="my-2">
+                  <AvatarFrame
+                    frameId={f.code}
+                    avatar={profile?.avatar || "🦁"}
+                    size="md"
+                    showBadge
+                  />
+                </div>
+
+                <b className="truncate text-xs font-bold text-white w-full">{f.title}</b>
+                <p className="line-clamp-1 text-[9px] text-ludo-soft/70 mb-2">{f.description}</p>
+
+                {isEquipped ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-black text-amber-300 py-1">
+                    <Check className="size-3" /> مُفعّل حالياً
+                  </span>
+                ) : isOwned ? (
+                  <Button
+                    size="sm"
+                    variant="royal"
+                    disabled={equippingFrame === f.code}
+                    onClick={async () => {
+                      setEquippingFrame(f.code);
+                      try {
+                        updateProfileLocally({ frame: f.code });
+                        if (user?.id) {
+                          await supabase
+                            .from("profiles")
+                            .update({ frame: f.code })
+                            .eq("id", user.id);
+                        }
+                        toast.success(`تم تفعيل ${f.title} بنجاح! ✨`);
+                        await refreshProfile();
+                      } catch {
+                        toast.error("تعذّر تفعيل الإطار");
+                      } finally {
+                        setEquippingFrame(null);
+                      }
+                    }}
+                    className="h-7 w-full text-[10px] font-bold"
+                  >
+                    تفعيل الإطار
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={onGoToStore}
+                    className="h-7 w-full border-ludo-gold/40 text-[10px] font-bold text-ludo-gold hover:bg-ludo-gold/20"
+                  >
+                    {f.cost_diamonds > 0
+                      ? `${f.cost_diamonds} 💎 بالمتجر`
+                      : `${f.cost_gold.toLocaleString()} 🪙 بالمتجر`}
+                  </Button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
 
       {/* قسم الشارات والأوسمة (الإنجازات) */}
       <section className="space-y-2.5">

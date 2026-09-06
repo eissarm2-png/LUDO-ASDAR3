@@ -111,6 +111,9 @@
   }
   html {
     background: var(--ludo-deep);
+    overscroll-behavior: none;
+    overscroll-behavior-y: none;
+    -webkit-overscroll-behavior: none;
   }
   body {
     margin: 0;
@@ -118,6 +121,9 @@
     background: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
+    overscroll-behavior: none;
+    overscroll-behavior-y: none;
+    -webkit-overscroll-behavior: none;
   }
   button {
     letter-spacing: 0;
@@ -2023,41 +2029,47 @@
 }
 .chat-panel {
   position: fixed;
-  z-index: 41;
-  bottom: 4.6rem;
+  z-index: 45;
+  bottom: 4.4rem;
   left: 0.6rem;
   right: 0.6rem;
-  max-width: 26rem;
+  max-width: 21rem;
   margin-inline: auto;
-  border-radius: 1rem;
-  border: 1px solid color-mix(in oklab, var(--ludo-gold) 55%, transparent);
-  background: linear-gradient(180deg, #59174c, #33091f);
+  border-radius: 0.9rem;
+  border: 1px solid color-mix(in oklab, var(--ludo-gold) 60%, transparent);
+  background: linear-gradient(180deg, rgba(72, 17, 62, 0.97), rgba(35, 6, 26, 0.98));
+  backdrop-filter: blur(14px);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.2),
-    0 16px 34px rgb(0 0 0 / 0.6);
+    inset 0 1px 0 rgb(255 255 255 / 0.25),
+    0 12px 30px rgb(0 0 0 / 0.75);
   overflow: hidden;
+  max-height: 255px;
+  display: flex;
+  flex-direction: column;
 }
 .chat-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
+  gap: 0.4rem;
+  padding: 0.32rem 0.6rem;
   border-bottom: 1px solid rgb(255 255 255 / 0.12);
   background: linear-gradient(
     90deg,
     transparent,
-    color-mix(in oklab, var(--ludo-pink) 45%, transparent),
+    color-mix(in oklab, var(--ludo-pink) 35%, transparent),
     transparent
   );
   color: var(--ludo-gold);
   font-family: var(--font-display);
+  font-size: 0.76rem;
+  flex-shrink: 0;
 }
 .chat-close {
   display: inline-grid;
   place-items: center;
-  width: 1.65rem;
-  height: 1.65rem;
+  width: 1.45rem;
+  height: 1.45rem;
   border-radius: 999px;
   border: 1px solid color-mix(in oklab, var(--ludo-gold) 55%, transparent);
   background: linear-gradient(180deg, #8c1f5c, #4a0f31);
@@ -2065,27 +2077,28 @@
   flex: 0 0 auto;
 }
 .chat-head small {
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   color: var(--ludo-soft);
 }
 .chat-list {
-  max-height: 11rem;
+  max-height: 4.6rem;
   overflow-y: auto;
   display: grid;
-  gap: 0.35rem;
-  padding: 0.5rem 0.6rem;
+  gap: 0.25rem;
+  padding: 0.35rem 0.5rem;
+  flex-shrink: 0;
 }
 .chat-bubble {
   display: grid;
-  gap: 0.1rem;
-  max-width: 85%;
-  padding: 0.35rem 0.55rem;
-  border-radius: 0.7rem;
-  font-size: 0.82rem;
+  gap: 0.05rem;
+  max-width: 88%;
+  padding: 0.22rem 0.45rem;
+  border-radius: 0.55rem;
+  font-size: 0.72rem;
   color: #fff;
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.2),
-    0 3px 8px rgb(0 0 0 / 0.4);
+    inset 0 1px 0 rgb(255 255 255 / 0.18),
+    0 2px 6px rgb(0 0 0 / 0.35);
 }
 .chat-mine {
   justify-self: start;
@@ -2098,26 +2111,27 @@
   border: 1px solid rgb(255 255 255 / 0.18);
 }
 .chat-author {
-  font-size: 0.6rem;
+  font-size: 0.56rem;
   color: var(--ludo-gold);
 }
 .chat-tabs {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 0.3rem;
-  padding: 0.35rem 0.5rem 0;
+  gap: 0.25rem;
+  padding: 0.2rem 0.45rem 0;
+  flex-shrink: 0;
 }
 .chat-tab {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.25rem;
-  padding: 0.35rem;
-  border-radius: 0.6rem;
+  gap: 0.2rem;
+  padding: 0.25rem 0.35rem;
+  border-radius: 0.45rem;
   border: 1px solid rgb(255 255 255 / 0.16);
   background: rgb(0 0 0 / 0.35);
   color: var(--ludo-soft);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 700;
 }
 .chat-tab-active {
@@ -2128,45 +2142,56 @@
 .chat-quick {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.3rem;
-  padding: 0.5rem;
+  gap: 0.22rem;
+  padding: 0.3rem 0.45rem;
+  max-height: 4.8rem;
+  overflow-y: auto;
 }
 .chat-quick-btn {
-  padding: 0.38rem 0.4rem;
-  border-radius: 0.6rem;
+  padding: 0.25rem 0.35rem;
+  border-radius: 0.45rem;
   border: 1px solid color-mix(in oklab, var(--ludo-gold) 40%, transparent);
   background: linear-gradient(180deg, #6a1f57, #430e33);
   color: #fff;
-  font-size: 0.74rem;
+  font-size: 0.68rem;
   font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .chat-emoji {
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  gap: 0.25rem;
-  padding: 0.5rem;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.2rem;
+  padding: 0.3rem 0.45rem;
+  max-height: 4.8rem;
+  overflow-y: auto;
 }
 .chat-emoji-btn {
-  border-radius: 0.5rem;
+  border-radius: 0.45rem;
   border: 1px solid rgb(255 255 255 / 0.14);
   background: rgb(0 0 0 / 0.3);
-  padding: 0.2rem;
+  padding: 0.15rem;
   font-size: 1.15rem;
+  display: grid;
+  place-items: center;
 }
 .chat-compose {
   display: flex;
-  gap: 0.4rem;
-  padding: 0.5rem;
+  gap: 0.3rem;
+  padding: 0.35rem 0.45rem;
+  flex-shrink: 0;
 }
 .chat-input {
   flex: 1;
   min-width: 0;
-  border-radius: 0.6rem;
+  border-radius: 0.45rem;
   border: 1px solid color-mix(in oklab, var(--ludo-gold) 45%, transparent);
   background: rgb(0 0 0 / 0.4);
-  padding: 0.45rem 0.6rem;
+  padding: 0.3rem 0.5rem;
   color: #fff;
-  font-size: 0.85rem;
+  font-size: 0.78rem;
+  height: 2.1rem;
 }
 .chat-input:focus {
   outline: 2px solid color-mix(in oklab, var(--ludo-gold) 60%, transparent);
@@ -2174,8 +2199,9 @@
 .chat-voice {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0 0.5rem 0.55rem;
+  gap: 0.4rem;
+  padding: 0 0.45rem 0.35rem;
+  flex-shrink: 0;
 }
 .rec-dot {
   width: 0.7rem;
@@ -2527,4 +2553,122 @@
   color: #fff;
   font-weight: 900;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+}
+
+/* ==========================================================
+   المكافأة اليومية والنرد الملكي - تأثيرات CSS الحصرية
+   ========================================================== */
+
+/* نبض ذهبي مستمر لبطاقة وزر المكافأة اليومية في الشاشة الرئيسية */
+@keyframes golden-card-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(246, 195, 44, 0.65), 0 6px 18px rgba(255, 215, 0, 0.3);
+    border-color: rgba(246, 195, 44, 0.9);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(246, 195, 44, 0), 0 10px 28px rgba(255, 215, 0, 0.65), inset 0 0 14px rgba(255, 215, 0, 0.3);
+    border-color: #fff2a3;
+    transform: scale(1.015);
+  }
+}
+
+@keyframes golden-btn-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(246, 195, 44, 0.8), 0 4px 12px rgba(217, 119, 6, 0.6);
+    filter: brightness(1);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(246, 195, 44, 0), 0 6px 18px rgba(246, 195, 44, 0.95);
+    filter: brightness(1.2);
+  }
+}
+
+.animate-golden-pulse {
+  animation: golden-card-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-golden-btn-pulse {
+  animation: golden-btn-pulse 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* حركة تذبذب النرد الملكي المحسوبة بدقة لعدم الاختفاء في الأعلى */
+@keyframes royal-dice-float {
+  0%, 100% {
+    transform: translateY(0);
+    animation-timing-function: cubic-bezier(0.8, 0, 1, 1);
+  }
+  50% {
+    transform: translateY(-8px);
+    animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
+  }
+}
+
+.animate-royal-bounce {
+  animation: royal-dice-float 2.4s infinite ease-in-out;
+}
+
+/* تأثير بصري احتفالي عند الضغط على استلام المكافأة اليومية */
+@keyframes claim-shockwave {
+  0% {
+    transform: scale(0.6);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+@keyframes claim-particle-burst {
+  0% {
+    transform: translate(0, 0) scale(0.3) rotate(0deg);
+    opacity: 1;
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--tx, 0px), var(--ty, -80px)) scale(1.1) rotate(var(--tr, 360deg));
+    opacity: 0;
+  }
+}
+
+@keyframes claim-ray-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes claim-badge-pop {
+  0% {
+    transform: scale(0.7);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-claim-shockwave {
+  animation: claim-shockwave 1.2s cubic-bezier(0.1, 0.8, 0.3, 1) forwards;
+}
+
+.animate-claim-particle {
+  animation: claim-particle-burst 1.6s cubic-bezier(0.15, 0.85, 0.35, 1) forwards;
+}
+
+.animate-claim-rays {
+  animation: claim-ray-spin 12s linear infinite;
+}
+
+.animate-claim-badge {
+  animation: claim-badge-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }

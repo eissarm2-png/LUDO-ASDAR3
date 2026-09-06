@@ -7,8 +7,8 @@ android {
         applicationId "com.ludu.game"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 2
+        versionName "1.1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,8 +16,32 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
-    buildTypes {
+
+    signingConfigs {
         release {
+            if (project.hasProperty('MYAPP_RELEASE_STORE_FILE') && file(project.property('MYAPP_RELEASE_STORE_FILE')).exists()) {
+                storeFile file(project.property('MYAPP_RELEASE_STORE_FILE'))
+                storePassword project.findProperty('MYAPP_RELEASE_STORE_PASSWORD') ?: 'abqor_ludo_2026'
+                keyAlias project.findProperty('MYAPP_RELEASE_KEY_ALIAS') ?: 'abqor'
+                keyPassword project.findProperty('MYAPP_RELEASE_KEY_PASSWORD') ?: 'abqor_ludo_2026'
+            } else if (file('abqor-release.keystore').exists()) {
+                storeFile file('abqor-release.keystore')
+                storePassword 'abqor_ludo_2026'
+                keyAlias 'abqor'
+                keyPassword 'abqor_ludo_2026'
+            }
+            v1SigningEnabled true
+            v2SigningEnabled true
+        }
+    }
+
+    buildTypes {
+        debug {
+            // توحيد التوقيع مع نسخة الإصدار لمنع تعارض الشهادات وخطأ التطبيق غير مثبت
+            signingConfig signingConfigs.release
+        }
+        release {
+            signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

@@ -130,32 +130,16 @@ function RootShell({ children }: { children: ReactNode }) {
         <script
           dangerouslySetInnerHTML={{
             __html: `
-              // Gracefully handle module import errors and Vite preload issues in preview/iframes
+              // Gracefully handle module import errors and Vite preload issues without reloading
               window.addEventListener('vite:preloadError', function(event) {
                 event.preventDefault();
-                var key = 'vite_preload_retry';
-                var count = parseInt(sessionStorage.getItem(key) || '0', 10);
-                if (count < 3) {
-                  sessionStorage.setItem(key, String(count + 1));
-                  window.location.reload();
-                }
+                console.warn('Vite preload error handled gracefully');
               });
               window.addEventListener('error', function(event) {
                 var msg = event && (event.message || '');
                 if (typeof msg === 'string' && (msg.indexOf('Importing a module script failed') !== -1 || msg.indexOf('dynamically imported module') !== -1)) {
-                  var key = 'module_script_retry';
-                  var count = parseInt(sessionStorage.getItem(key) || '0', 10);
-                  if (count < 2) {
-                    sessionStorage.setItem(key, String(count + 1));
-                    setTimeout(function() { window.location.reload(); }, 300);
-                  }
+                  console.warn('Module script error handled gracefully:', msg);
                 }
-              });
-              window.addEventListener('DOMContentLoaded', function() {
-                setTimeout(function() {
-                  sessionStorage.removeItem('vite_preload_retry');
-                  sessionStorage.removeItem('module_script_retry');
-                }, 3000);
               });
             `,
           }}

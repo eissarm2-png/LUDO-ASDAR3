@@ -32,7 +32,6 @@ import {
   VolumeX,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import brandMark from "@/assets/brand-mark.png";
 import homeUi from "@/assets/home-ui.jpeg.asset.json";
 
 import coinStack from "@/assets/coin-stack.png";
@@ -69,6 +68,8 @@ import { DominoGame } from "@/components/domino/DominoGame";
 import { SplashScreen } from "./SplashScreen";
 import { GateScreen } from "./GateScreen";
 import { RoomsPanel, type RoomLaunch } from "./RoomsScreen";
+import { AvatarFrame } from "./AvatarFrame";
+import { useFrameStore } from "@/hooks/useFrameStore";
 import { supabase } from "@/integrations/supabase/client";
 import { MatchSummary, type MatchEvent } from "./MatchSummary";
 import { haptics, loadHaptics, setHaptics as persistHaptics } from "@/lib/haptics";
@@ -103,6 +104,7 @@ import { RewardsScreen } from "./RewardsScreen";
 import { TournamentsScreen } from "./TournamentsScreen";
 import { ApkManagerSection } from "./ApkManagerSection";
 import { LivePlayersScreen } from "./LivePlayersScreen";
+import { Friend1v1Screen } from "./Friend1v1Screen";
 import { WalletScreen } from "./WalletScreen";
 import { SecurityScreen } from "./SecurityScreen";
 import { ReconnectOverlay } from "./ReconnectOverlay";
@@ -112,6 +114,9 @@ import { AccountLinkCard } from "./AccountLinkCard";
 import { useUnreadNotifications } from "@/hooks/useLiveCounts";
 import { NotificationsScreen } from "./NotificationsScreen";
 import { SmartPopups, triggerSmartWinPopup } from "./SmartPopups";
+import { DailyRewardModal } from "./DailyRewardModal";
+import { AnimatedRoyalDice } from "./AnimatedRoyalDice";
+import { getDailyRewardState } from "@/lib/daily-reward";
 import { useServerFn } from "@tanstack/react-start";
 import { submitMatchResult } from "@/lib/match.functions";
 import { chargeDiceRoll } from "@/lib/wallet.functions";
@@ -124,8 +129,21 @@ import {
   startServerTurn,
 } from "@/lib/live.functions";
 import { TurnTimer } from "./TurnTimer";
-import { MatchChat, type ChatContext } from "./MatchChat";
+import { MatchChat, type ChatContext, type ChatMessage } from "./MatchChat";
+import { PlayerChatBubble, type ChatBubbleData } from "./PlayerChatBubble";
 import { LiveVoiceButton } from "./LiveVoice";
+import {
+  recordTournamentMatchOutcome,
+  getRoundName,
+  type TournamentRound,
+} from "@/lib/tournament-manager";
+import {
+  saveActiveMatch,
+  loadActiveMatch,
+  clearActiveMatch,
+  saveUserLocalProgress,
+  type SavedMatchState,
+} from "@/lib/user-progress";
 import {
   applyMove,
   applyRoll,
@@ -221,7 +239,7 @@ type SyncResponsePayload = {
 };
 
 function LudoShell() {
-  const { user, isAdmin, refreshProfile } = useAuth();
+  const { user, profile, isAdmin, refreshProfile } = useAuth();
   const [screen, setScreen] = useState<Screen>("home");
   const [playerCount, setPlayerCount] = useState<2 | 3 | 4>(4);
   const [humanCount, setHumanCount] = useState(1);
@@ -230,6 +248,51 @@ function LudoShell() {
   const [muted, setMuted] = useState(false);
   const [haptic, setHaptic] = useState(true);
   const [stage, setStage] = useState<"splash" | "gate" | "app">("splash");
+
+  // تجاوز شاشة الترحيب بسلاسة بعد نجاح الـ Hydration إذا تم إكمالها مسبقاً في الجلسة
+  useEffect(() => {
+    if (
+      typeof window !== "undefined" &&
+      window.sessionStorage?.getItem("abqor_splash_done") === "1"
+    ) {
+      setStage(guestReady() || user ? "app" : "gate");
+    }
+  }, [user]);
+
+  const [dailyRewardOpen, setDailyRewardOpen] = useState(false);
+  const [dailyAvailable, setDailyAvailable] = useState(false);
+  const [autoDailyTriggered, setAutoDailyTriggered] = useState(false);
+
+  // مراقبة توفر المكافأة اليومية والتحديث عند الاستلام
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const updateDailyStatus = () => {
+      const state = getDailyRewardState(user?.id);
+      setDailyAvailable(!state.hasClaimedToday);
+    };
+    updateDailyStatus();
+    window.addEventListener("daily_reward_claimed", updateDailyStatus);
+    return () => window.removeEventListener("daily_reward_claimed", updateDailyStatus);
+  }, [user?.id]);
+
+  // إظهار نافذة المكافأة اليومية تلقائياً عند فتح التطبيق ودخول الشاشة الرئيسية
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (stage !== "app" || screen !== "home" || game.phase !== "idle") return;
+
+    const alreadyShown = window.sessionStorage?.getItem("abqor_daily_modal_shown") === "1";
+    const state = getDailyRewardState(user?.id);
+
+    if (!state.hasClaimedToday && !alreadyShown) {
+      const timer = setTimeout(() => {
+        setAutoDailyTriggered(true);
+        setDailyRewardOpen(true);
+        window.sessionStorage?.setItem("abqor_daily_modal_shown", "1");
+      }, 750);
+      return () => clearTimeout(timer);
+    }
+  }, [stage, screen, game.phase, user?.id]);
+
   const [guest, setGuest] = useState(false);
   const [events, setEvents] = useState<MatchEvent[]>([]);
   const [volume, setVolume] = useState(0.6);
@@ -245,8 +308,80 @@ function LudoShell() {
   const [remaining, setRemaining] = useState(TURN_SECONDS);
   const [serverSynced, setServerSynced] = useState(false);
   const [inRoom, setInRoom] = useState(false);
+  /** فقاعات المحادثة النشطة المعروضة فوق رؤوس اللاعبين */
+  const [chatBubbles, setChatBubbles] = useState<Record<number, ChatBubbleData>>({});
+  /** آخر رسالة محادثة واردة ليتم دمجها في نافذة المحادثة */
+  const [incomingChatMessage, setIncomingChatMessage] = useState<ChatMessage | null>(null);
   /** فهرس مقعدي داخل players في مباراة الغرفة (0 في اللعب الفردي) */
   const [seatIndex, setSeatIndex] = useState(0);
+  const [activeTournament, setActiveTournament] = useState<{
+    id: string;
+    name: string;
+    icon: string;
+    round: TournamentRound;
+    roundNumber: number;
+    prizeGold: number;
+    prizeDiamonds: number;
+  } | null>(null);
+  const [savedMatch, setSavedMatch] = useState<SavedMatchState | null>(() => {
+    if (typeof window === "undefined") return null;
+    return loadActiveMatch();
+  });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setSavedMatch(loadActiveMatch());
+    }
+  }, [screen]);
+
+  // استئناف المباراة المحفوظة
+  const handleResumeSavedMatch = useCallback(() => {
+    if (!savedMatch) return;
+    setGame(savedMatch.game);
+    setPlayerCount(savedMatch.playerCount);
+    setSeatIndex(savedMatch.seatIndex);
+    if (savedMatch.tournamentInfo) {
+      setActiveTournament(savedMatch.tournamentInfo as any);
+    }
+    setSavedMatch(null);
+    setScreen("game");
+    toast.success("تم استئناف المباراة بنجاح! 🎲");
+  }, [savedMatch]);
+
+  // تخطي وإلغاء المباراة المحفوظة
+  const handleDismissSavedMatch = useCallback(() => {
+    clearActiveMatch();
+    setSavedMatch(null);
+    toast.info("تم إلغاء وحذف المباراة السابقة");
+  }, []);
+
+  // منع إعادة تحميل الصفحة العرضية وفقدان المباراة أثناء اللعب
+  useEffect(() => {
+    if (screen !== "game" || game.phase === "over") return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "لديك مباراة جارية! هل أنت متأكد من مغادرة اللعبة؟ سيتم حفظ تقدمك تلقائياً.";
+      return e.returnValue;
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [screen, game.phase]);
+
+  // حفظ تقدم المباراة الحالية تلقائياً لاستئنافها عند الحاجة
+  useEffect(() => {
+    if (screen === "game" && game.phase !== "over" && game.players.length > 0) {
+      saveActiveMatch({
+        id: matchId.current || "solo_match",
+        savedAt: Date.now(),
+        mode: "ludo",
+        playerCount,
+        seatIndex,
+        tournamentInfo: activeTournament ?? undefined,
+        game,
+      });
+    }
+  }, [screen, game, playerCount, seatIndex, activeTournament]);
+
   const stateVersion = useRef(0);
   const localActed = useRef(false);
   const matchChannel = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -263,6 +398,22 @@ function LudoShell() {
   useEffect(() => {
     gameRef.current = game;
   }, [game]);
+
+  // إعادة تعيين مؤشرات الرمي تلقائيًا عند انتقال الدور لمنع تعليق النرد أبدًا
+  useEffect(() => {
+    rollingRef.current = false;
+    setRolling(false);
+  }, [game.turn]);
+
+  // صمام أمان: فك تعليق دوران النرد تلقائيًا بعد 1.6 ثانية كحد أقصى مهما حدث
+  useEffect(() => {
+    if (!rolling) return;
+    const timeout = window.setTimeout(() => {
+      rollingRef.current = false;
+      setRolling(false);
+    }, 1600);
+    return () => window.clearTimeout(timeout);
+  }, [rolling]);
   const remoteRollStartedAt = useRef<number | null>(null);
   const remoteRollDuration = useRef<number>(650);
   const remoteRollTimer = useRef<number | null>(null);
@@ -377,9 +528,10 @@ function LudoShell() {
       initAudio();
       setInRoom(false);
       setSeatIndex(0);
-      setPlayerCount(players);
+      const safePlayers = Math.min(4, Math.max(2, players)) as 2 | 3 | 4;
+      setPlayerCount(safePlayers);
       setHumanCount(1);
-      setGame(createGame(players, 1));
+      setGame(createGame(safePlayers, 1));
       savedFor.current = null;
       matchId.current = crypto.randomUUID();
       matchStart.current = Date.now();
@@ -530,12 +682,6 @@ function LudoShell() {
     }
     initAudio();
 
-    // فحص الرصيد محليًا أولاً لمنع أي تأخير في حركة النرد
-    if (inRoom && user && (profile?.gold ?? 0) < ROLL_COST) {
-      toast.error(`تحتاج ${ROLL_COST} ذهب لرمية النرد — افتح صندوقًا أو أكمل مهمة`);
-      return;
-    }
-
     // تشغيل دوران النرد فورًا على شاشة اللاعب
     rollingRef.current = true;
     setRolling(true);
@@ -544,7 +690,7 @@ function LudoShell() {
 
     const rollStartTime = Date.now();
     const serverTimestamp = rollStartTime + clockOffset.current;
-    const minRollDuration = 650; // مدة دوران النرد الموحدة لجميع اللاعبين
+    const minRollDuration = 550; // مدة دوران النرد الموحدة لجميع اللاعبين
 
     // بث حالة 'rolling' بدقة لجميع اللاعبين عبر matchChannel لحظة الضغط مع بيانات التوقيت
     if (inRoom && matchChannel.current) {
@@ -569,11 +715,10 @@ function LudoShell() {
     // دوران النرد بالتوازي مع استدعاء السيرفر لامتصاص تأخير الشبكة
     const spinPromise = new Promise((resolve) => window.setTimeout(resolve, minRollDuration));
 
-    // تشغيل خصم الرسوم في الخلفية بالتوازي دون تعطيل حركة النرد
-    const payPromise =
-      inRoom && user && isOnline()
-        ? withTimeout(payRoll({ data: { cost: ROLL_COST, matchId: matchId.current } }), 2000)
-        : Promise.resolve(null);
+    // تشغيل خصم الرسوم اختياريًا في الخلفية دون أي تعطيل أو اشتراط
+    if (inRoom && user && isOnline() && (profile?.gold ?? 0) >= ROLL_COST) {
+      void payRoll({ data: { cost: ROLL_COST, matchId: matchId.current } }).catch(() => {});
+    }
 
     let value = 0;
     let trusted = false;
@@ -581,10 +726,9 @@ function LudoShell() {
     try {
       const [res] = await Promise.all([
         inRoom
-          ? withTimeout(sendRoll({ data: { matchId: matchId.current, seq } }), 2200)
+          ? withTimeout(sendRoll({ data: { matchId: matchId.current, seq } }), 450)
           : Promise.resolve(null),
         spinPromise,
-        payPromise,
       ]);
       value = res?.value ?? rollDie();
       trusted = Boolean(res?.sig);
@@ -601,7 +745,7 @@ function LudoShell() {
     }
 
     setVerified(trusted);
-    localActed.current = true;
+    localActed.current = false;
     const nextGame = applyRoll(game, value);
 
     // بث الحالة فورًا مع مؤشر انتهاء الرمي وقيمة النرد لضبط تزامن الأجهزة فورًا
@@ -827,28 +971,38 @@ function LudoShell() {
       }
       if (left <= 0) {
         window.clearInterval(tick);
-        // سباق: إذا كانت هناك رمية قيد التنفيذ لا يُنهى الدور حتى تكتمل نتيجتها
-        if (rollingRef.current) return;
         const sig = turnSig.current;
         const finish = () => {
           sfx.timeout();
           haptics.turnPass();
           setDeadline(null);
           setVerified(false);
+          rollingRef.current = false;
+          setRolling(false);
           localActed.current = true;
-          setGame((g) => forfeitTurn(g));
+          setGame((g) => {
+            const next = forfeitTurn(g);
+            if (inRoom && matchChannel.current) {
+              stateVersion.current += 1;
+              void matchChannel.current.send({
+                type: "broadcast",
+                event: "state",
+                payload: {
+                  v: stateVersion.current,
+                  state: next,
+                  serverTimestamp: Date.now() + clockOffset.current,
+                },
+              });
+            }
+            return next;
+          });
         };
-        if (!sig) {
-          finish();
-          return;
+        finish();
+        if (sig) {
+          void endTurn({ data: { matchId: matchId.current, turn: turnNo, deadline, sig } }).catch(
+            () => {},
+          );
         }
-        void endTurn({ data: { matchId: matchId.current, turn: turnNo, deadline, sig } })
-          .then((verdict) => {
-            // السيرفر هو من يقرّ انتهاء المهلة فعليًا
-            if (verdict.ok) finish();
-            else setDeadline(Date.now() + 1200);
-          })
-          .catch(() => finish());
       }
     }, 180);
     return () => window.clearInterval(tick);
@@ -859,6 +1013,63 @@ function LudoShell() {
     if (!inRoom || screen !== "game" || !matchId.current) return;
     const channel = supabase
       .channel(`match:${matchId.current}`, { config: { broadcast: { self: false, ack: true } } })
+      .on("broadcast", { event: "chat" }, ({ payload }) => {
+        const data = payload as
+          | {
+              id?: string;
+              senderSeat: number;
+              author: string;
+              kind: "text" | "quick" | "emoji" | "voice";
+              text?: string;
+              audioUrl?: string;
+              seconds?: number;
+              at?: number;
+            }
+          | undefined;
+        if (!data || typeof data.senderSeat !== "number") return;
+
+        sfx.chat();
+        haptics.tap();
+
+        const bubbleId = data.id || crypto.randomUUID();
+        const displayText =
+          data.kind === "voice" ? `🎤 رسالة صوتية (${data.seconds ?? 1}ث)` : data.text || "";
+
+        // إظهار فقاعة المحادثة فوراً فوق أفتار اللاعب صاحب المقعد في شاشة جميع اللاعبين
+        setChatBubbles((prev) => ({
+          ...prev,
+          [data.senderSeat]: {
+            id: bubbleId,
+            text: displayText,
+            kind: data.kind,
+            author: data.author,
+          },
+        }));
+
+        // دمج الرسالة في نافذة وسجل المحادثة
+        setIncomingChatMessage({
+          id: bubbleId,
+          mine: false,
+          author: data.author,
+          kind: data.kind,
+          text: data.text,
+          audioUrl: data.audioUrl,
+          seconds: data.seconds,
+          at: data.at || Date.now(),
+        });
+
+        // إخفاء الفقاعة بعد 4.5 ثوانٍ
+        window.setTimeout(() => {
+          setChatBubbles((prev) => {
+            if (prev[data.senderSeat]?.id === bubbleId) {
+              const next = { ...prev };
+              delete next[data.senderSeat];
+              return next;
+            }
+            return prev;
+          });
+        }, 4500);
+      })
       .on("broadcast", { event: "rolling" }, ({ payload }) => {
         const info = payload as RollBroadcastPayload | undefined;
         remoteRollStartedAt.current = Date.now();
@@ -1016,9 +1227,11 @@ function LudoShell() {
     }
   }, [game, inRoom, reconcileState]);
 
-  // احتفال + حفظ النتيجة (يتم التحقق منها في السيرفر)
+  // احتفال + حفظ النتيجة (يتم التحقق منها في السيرفر وتخزينها محلياً ودائماً)
   useEffect(() => {
     if (game.phase !== "over" || game.winner === null) return;
+    clearActiveMatch();
+    setSavedMatch(null);
     sfx.win();
     haptics.win();
     showCelebration(4200);
@@ -1034,6 +1247,38 @@ function LudoShell() {
         moves: moveCount.current,
         mode: "ludo",
       });
+
+      // حفظ التقدم المحلي الدائم للمستخدم
+      saveUserLocalProgress(user?.id, {
+        games: (profile?.games ?? 0) + 1,
+        wins: didWin ? (profile?.wins ?? 0) + 1 : (profile?.wins ?? 0),
+        losses: !didWin ? (profile?.losses ?? 0) + 1 : (profile?.losses ?? 0),
+        xp: (profile?.xp ?? 0) + (didWin ? 80 : 25),
+        points: (profile?.points ?? 0) + (didWin ? 30 : 5),
+        gold: (profile?.gold ?? 0) + (didWin ? 500 : 50),
+      });
+
+      // إدارة تقدم وجوائز البطولة المحفوظة
+      if (activeTournament) {
+        const outcome = recordTournamentMatchOutcome(user?.id, activeTournament, didWin);
+        if (didWin) {
+          if (outcome.isChampion) {
+            toast.success(
+              `👑 مبارك! أنت بطل ${activeTournament.name} وتوجت بالكأس! +${outcome.awardedGold} ذهب و+${outcome.awardedDiamonds} ماسة!`,
+            );
+          } else {
+            toast.success(
+              `🏆 فوز مستحق! تأهلت إلى ${getRoundName(outcome.newRound)} في ${activeTournament.name}`,
+            );
+          }
+        } else {
+          toast.info(
+            `انتهت مشاركتك في ${activeTournament.name} عند ${getRoundName(activeTournament.round)} — حظاً أوفر في البطولة القادمة!`,
+          );
+        }
+        setActiveTournament(null);
+      }
+
       if (didWin) {
         triggerSmartWinPopup({
           winnerName: user ? (profile?.display_name ?? "البطل") : "أنت",
@@ -1045,10 +1290,142 @@ function LudoShell() {
         });
       }
     }
-  }, [game.phase, game.winner, game.players, inRoom, seatIndex, reportMatch, showCelebration]);
+  }, [game.phase, game.winner, game.players, inRoom, seatIndex, reportMatch, showCelebration, activeTournament, user?.id, profile]);
+
+  const handleSendChat = useCallback(
+    (msg: {
+      kind: "text" | "quick" | "emoji" | "voice";
+      text?: string;
+      audioUrl?: string;
+      seconds?: number;
+    }) => {
+      const mySeat =
+        (inRoom && seatIndex >= 0
+          ? game.players[seatIndex]?.seat
+          : game.players.find((p) => !p.isBot)?.seat) ?? 0;
+
+      const myName =
+        (inRoom && seatIndex >= 0
+          ? game.players[seatIndex]?.name
+          : game.players.find((p) => !p.isBot)?.name) ??
+        profile?.display_name ??
+        "أنا";
+
+      const bubbleId = crypto.randomUUID();
+      const displayText = msg.kind === "voice" ? `🎤 صوت (${msg.seconds ?? 1}ث)` : msg.text || "";
+
+      // 1) إظهار فقاعة المحادثة فوراً فوق أفتار اللاعب (أنا)
+      setChatBubbles((prev) => ({
+        ...prev,
+        [mySeat]: {
+          id: bubbleId,
+          text: displayText,
+          kind: msg.kind,
+          author: myName,
+        },
+      }));
+
+      // إخفاء الفقاعة تلقائياً بعد 4.5 ثوانٍ
+      window.setTimeout(() => {
+        setChatBubbles((prev) => {
+          if (prev[mySeat]?.id === bubbleId) {
+            const next = { ...prev };
+            delete next[mySeat];
+            return next;
+          }
+          return prev;
+        });
+      }, 4500);
+
+      // 2) بث الرسالة عبر القناة المباشرة لجميع الخصوم في الغرفة
+      if (inRoom && matchChannel.current) {
+        void matchChannel.current.send({
+          type: "broadcast",
+          event: "chat",
+          payload: {
+            id: bubbleId,
+            senderSeat: mySeat,
+            author: myName,
+            kind: msg.kind,
+            text: msg.text,
+            audioUrl: msg.audioUrl,
+            seconds: msg.seconds,
+            at: Date.now(),
+          },
+        });
+      }
+
+      // 3) في حال اللعب مع الروبوتات: رد تفاعلي ذكي يظهر فوق رأس الروبوت
+      if (!inRoom) {
+        const botOpponents = game.players.filter((p) => p.isBot);
+        if (botOpponents.length > 0 && Math.random() < 0.85) {
+          const chosenBot = botOpponents[Math.floor(Math.random() * botOpponents.length)]!;
+          const botReplies =
+            msg.kind === "emoji"
+              ? ["👑", "🎲", "🔥", "🤝", "👏", "😎", "🎯"]
+              : [
+                  "لعبة رائعة! 🎲",
+                  "بالتوفيق يا بطل 👍",
+                  "ركّز باللعب 😎",
+                  "ستة قادمة! 🔥",
+                  "🤝",
+                  "تحياتي 👑",
+                ];
+          const botReplyText = botReplies[Math.floor(Math.random() * botReplies.length)]!;
+
+          window.setTimeout(
+            () => {
+              const botBubbleId = crypto.randomUUID();
+              sfx.chat();
+              setChatBubbles((prev) => ({
+                ...prev,
+                [chosenBot.seat]: {
+                  id: botBubbleId,
+                  text: botReplyText,
+                  kind: msg.kind === "emoji" ? "emoji" : "quick",
+                  author: chosenBot.name,
+                },
+              }));
+
+              setIncomingChatMessage({
+                id: botBubbleId,
+                mine: false,
+                author: chosenBot.name,
+                kind: msg.kind === "emoji" ? "emoji" : "quick",
+                text: botReplyText,
+                at: Date.now(),
+              });
+
+              window.setTimeout(() => {
+                setChatBubbles((prev) => {
+                  if (prev[chosenBot.seat]?.id === botBubbleId) {
+                    const next = { ...prev };
+                    delete next[chosenBot.seat];
+                    return next;
+                  }
+                  return prev;
+                });
+              }, 4500);
+            },
+            1200 + Math.random() * 800,
+          );
+        }
+      }
+    },
+    [inRoom, seatIndex, game.players, profile?.display_name],
+  );
 
   if (stage === "splash") {
-    return <SplashScreen onDone={() => setStage(guestReady() || user ? "app" : "gate")} />;
+    return (
+      <SplashScreen
+        onDone={() => {
+          if (typeof window !== "undefined") {
+            window.sessionStorage?.setItem("abqor_splash_done", "1");
+          }
+          setStage(guestReady() || user ? "app" : "gate");
+        }}
+      />
+    );
   }
 
   if (stage === "gate" && !user && !guest) {
@@ -1122,10 +1499,14 @@ function LudoShell() {
           onCancel={() => setExitAsk(false)}
           onConfirm={() => {
             setExitAsk(false);
+            clearActiveMatch();
+            setSavedMatch(null);
+            setActiveTournament(null);
             exitMatch();
           }}
         />
         <GameScreen
+          tournamentInfo={activeTournament}
           state={game}
           moves={moves}
           rolling={rolling}
@@ -1156,6 +1537,9 @@ function LudoShell() {
                     : null
               : null,
           }}
+          chatBubbles={chatBubbles}
+          incomingChatMessage={incomingChatMessage}
+          onSendChatMessage={handleSendChat}
           onMute={() => toggleMute()}
 
           onRoll={handleRoll}
@@ -1178,6 +1562,11 @@ function LudoShell() {
           navigate("rooms");
         }}
       />
+      <DailyRewardModal
+        isOpen={dailyRewardOpen}
+        onClose={() => setDailyRewardOpen(false)}
+        autoOpened={autoDailyTriggered}
+      />
       <div className="relative mx-auto min-h-screen w-full max-w-md px-3 pb-24 pt-3 sm:pt-5">
         {screen !== "home" && (
           <TopBar
@@ -1189,7 +1578,16 @@ function LudoShell() {
         )}
         {screen === "home" && <AnnouncementBar />}
         {screen === "home" && (
-          <HomeScreen navigate={navigate} quickPlay={startSolo} isAdmin={isAdmin} />
+          <HomeScreen
+            navigate={navigate}
+            quickPlay={startSolo}
+            isAdmin={isAdmin}
+            onOpenDailyReward={() => setDailyRewardOpen(true)}
+            dailyAvailable={dailyAvailable}
+            savedMatch={savedMatch}
+            onResumeMatch={handleResumeSavedMatch}
+            onDismissSavedMatch={handleDismissSavedMatch}
+          />
         )}
         {screen === "setup" && (
           <SetupScreen
@@ -1211,7 +1609,6 @@ function LudoShell() {
               meId={user?.id ?? null}
               onLaunch={launchRoomMatch}
               initialCode={inviteCode}
-              onRequireAuth={() => navigate("account")}
             />
           </PanelPage>
         )}
@@ -1255,9 +1652,18 @@ function LudoShell() {
           <PanelPage title="البطولات والكؤوس" icon={<Trophy />} onBack={() => navigate("home")}>
             <TournamentsScreen
               onBack={() => navigate("home")}
-              onStartTournamentMatch={(t) => {
+              onStartTournamentMatch={(t, round) => {
+                setActiveTournament({
+                  id: t.id,
+                  name: t.name,
+                  icon: t.icon,
+                  round: round,
+                  roundNumber: round === "champion" ? 4 : round === "final" ? 3 : round === "semi" ? 2 : 1,
+                  prizeGold: t.prizeGold,
+                  prizeDiamonds: t.prizeDiamonds,
+                });
                 setPlayerCount(4);
-                startMatchWithCount(4);
+                startSolo(4);
               }}
             />
           </PanelPage>
@@ -1392,12 +1798,21 @@ function LudoShell() {
             icon={<Smartphone />}
             onBack={() => navigate("home")}
           >
-            <ApkManagerSection />
+            {isAdmin ? (
+              <ApkManagerSection />
+            ) : (
+              <div className="p-6 text-center text-sm text-ludo-soft">
+                هذه الصفحة مخصصة لمسؤول التطبيق فقط.
+              </div>
+            )}
           </PanelPage>
         )}
         {screen === "profile" && (
           <PanelPage title="الملف الشخصي" icon={<UserCircle2 />} onBack={() => navigate("home")}>
-            <ProfileScreen onHistory={() => navigate("history")} />
+            <ProfileScreen
+              onHistory={() => navigate("history")}
+              onGoToStore={() => navigate("store")}
+            />
           </PanelPage>
         )}
         {screen === "invites" && (
@@ -1458,24 +1873,27 @@ function TopBar({
   onAccount: () => void;
 }) {
   const { profile, user } = useAuth();
+  const { hasNewFrames } = useFrameStore();
   const xp = (profile?.xp ?? 0) % 300;
   return (
     <header className="space-y-2">
       <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
-        <button type="button" onClick={onAccount} className="relative" aria-label="حسابي">
-          <span className="level-orb overflow-hidden">
-            {user ? (
-              profile?.avatar &&
-              (profile.avatar.startsWith("data:") || profile.avatar.startsWith("http")) ? (
-                <img src={profile.avatar} alt="" className="size-full object-cover rounded-full" />
-              ) : profile?.avatar && profile.avatar.length <= 3 ? (
-                <span>{profile.avatar}</span>
-              ) : (
-                <img src={avatarTiger} alt="" width={512} height={512} loading="lazy" />
-              )
-            ) : (
-              <img src={avatarTiger} alt="" width={512} height={512} loading="lazy" />
-            )}
+        <button type="button" onClick={onAccount} className="relative group" aria-label="حسابي">
+          {/* شارة إشعار باللون الأحمر عند توفر إطارات جديدة في المتجر */}
+          {hasNewFrames && (
+            <span
+              className="absolute -top-1 -right-1 z-30 flex size-3.5 items-center justify-center rounded-full bg-rose-500 ring-2 ring-[#220720] shadow-[0_0_8px_rgba(244,63,94,0.9)] animate-pulse"
+              title="إطارات جديدة متوفرة في المتجر!"
+            >
+              <span className="size-1.5 rounded-full bg-white" />
+            </span>
+          )}
+          <span className="level-orb overflow-visible flex items-center justify-center">
+            <AvatarFrame
+              frameId={profile?.frame}
+              avatar={profile?.avatar || avatarTiger}
+              size="sm"
+            />
           </span>
           <span className="level-chip">{user ? `مستوى ${profile?.level ?? 1}` : "دخول"}</span>
         </button>
@@ -1538,18 +1956,12 @@ function TopBar({
 
 function Brand() {
   return (
-    <div className="min-w-0 text-center">
-      <img
-        src={brandMark}
-        alt="شعار عبقور لودو"
-        width={512}
-        height={512}
-        className="asset-shine mx-auto -mb-2 size-16"
-      />
-      <h1 className="truncate font-display text-2xl font-black text-ludo-gold text-shadow-glow">
+    <div className="min-w-0 text-center flex flex-col items-center justify-center pt-0.5">
+      <AnimatedRoyalDice size="sm" className="mx-auto" />
+      <h1 className="truncate font-display text-xl sm:text-2xl font-black text-ludo-gold text-shadow-glow mt-1">
         ABQOR LUDO
       </h1>
-      <p className="-mt-1 text-xs font-bold text-ludo-pink">عبقور لودو</p>
+      <p className="-mt-1 text-[11px] font-bold text-ludo-pink">عبقور لودو</p>
     </div>
   );
 }
@@ -1579,10 +1991,20 @@ function HomeScreen({
   navigate,
   quickPlay,
   isAdmin,
+  onOpenDailyReward,
+  dailyAvailable,
+  savedMatch,
+  onResumeMatch,
+  onDismissSavedMatch,
 }: {
   navigate: (s: Screen) => void;
   quickPlay: (players: number) => void;
   isAdmin?: boolean;
+  onOpenDailyReward?: () => void;
+  dailyAvailable?: boolean;
+  savedMatch?: SavedMatchState | null;
+  onResumeMatch?: () => void;
+  onDismissSavedMatch?: () => void;
 }) {
   const { profile, user } = useAuth();
   return (
@@ -1668,12 +2090,57 @@ function HomeScreen({
       </header>
 
       {/* المحتوى الرئيسي */}
-      <div className="flex w-full flex-1 flex-col items-center gap-5 overflow-y-auto px-4 pb-24 pt-6">
-        <img
-          src={brandMark}
-          className="h-16 object-contain drop-shadow-[0_0_15px_rgba(255,215,0,0.4)]"
-          alt="Logo"
-        />
+      <div className="flex w-full flex-1 flex-col items-center gap-4 overflow-y-auto px-4 pb-24 pt-3">
+        <div className="flex flex-col items-center justify-center text-center gap-1.5 my-1 pt-2">
+          <AnimatedRoyalDice size="lg" />
+          <div className="flex flex-col items-center">
+            <h2 className="font-display text-2xl sm:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#ffe484] via-[#f6c32c] to-[#e49b13] drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)] tracking-wide">
+              عبقور لودو
+            </h2>
+            <p className="text-[11px] font-bold text-amber-200/80 tracking-widest -mt-0.5">
+              ABQOR LUDO ROYAL
+            </p>
+          </div>
+        </div>
+
+        {/* بطاقة استئناف المباراة المحفوظة تلقائياً */}
+        {savedMatch && (
+          <div className="w-full rounded-2xl border-2 border-amber-400/80 bg-gradient-to-r from-amber-500/25 via-purple-950/70 to-black/80 p-3.5 shadow-[0_8px_20px_rgba(0,0,0,0.5)] flex items-center justify-between gap-3 animate-pulse">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-amber-400/20 border border-amber-400/40 text-2xl shadow-inner">
+                ⚡
+              </div>
+              <div className="min-w-0 text-right">
+                <b className="text-xs font-black text-amber-300 block truncate">
+                  لديك مباراة جارية محفوظة!
+                </b>
+                <span className="text-[11px] text-ludo-soft block truncate">
+                  {savedMatch.tournamentInfo
+                    ? `بطولة ${savedMatch.tournamentInfo.name} (${getRoundName((savedMatch.tournamentInfo.round as TournamentRound) || "quarter")})`
+                    : `مباراة لودو (${savedMatch.playerCount} لاعبين)`}
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Button
+                variant="play"
+                size="sm"
+                onClick={onResumeMatch}
+                className="text-xs font-black shadow-md px-3"
+              >
+                استئناف اللعب
+              </Button>
+              <Button
+                variant="ghostGold"
+                size="sm"
+                onClick={onDismissSavedMatch}
+                className="text-[10px] text-ludo-soft px-2"
+              >
+                تخطي
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* أزرار اللعب السريع */}
         <div className="flex w-full gap-4 mt-2">
@@ -1722,6 +2189,73 @@ function HomeScreen({
           </span>
         </button>
 
+        {/* بطاقة المكافأة اليومية الملكية */}
+        {/* بطاقة المكافأة اليومية الملكية */}
+        <button
+          id="home-daily-reward-card"
+          type="button"
+          onClick={() => {
+            sfx.tap();
+            onOpenDailyReward?.();
+          }}
+          className={cn(
+            "relative flex w-full items-center justify-between overflow-hidden rounded-2xl border-2 p-3 transition-all active:scale-95 text-right group",
+            dailyAvailable
+              ? "border-amber-300 bg-gradient-to-r from-[#7a185e] via-[#430833] to-[#1c0215] animate-golden-pulse cursor-pointer shadow-[0_6px_22px_rgba(255,215,0,0.45)]"
+              : "border-ludo-gold/70 bg-gradient-to-r from-[#6b1652] via-[#3a082c] to-[#1a0214] opacity-95 hover:border-ludo-gold shadow-[0_6px_18px_rgba(255,215,0,0.25)]",
+          )}
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div
+              className={cn(
+                "relative grid size-12 shrink-0 place-items-center rounded-xl border transition-all shadow-md",
+                dailyAvailable
+                  ? "border-amber-300 bg-gradient-to-br from-amber-400/30 to-black/60 shadow-[0_0_12px_rgba(255,215,0,0.6)]"
+                  : "border-ludo-gold/50 bg-gradient-to-br from-ludo-gold/20 to-black/50",
+              )}
+            >
+              <img src={giftBox} className="size-8 object-contain drop-shadow-md" alt="Gift" />
+              {dailyAvailable && (
+                <span className="absolute -top-1 -right-1 flex size-3.5">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-amber-400 opacity-90"></span>
+                  <span className="relative inline-flex size-3.5 rounded-full bg-amber-500 border-2 border-white"></span>
+                </span>
+              )}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h3 className="font-display text-base font-bold text-white drop-shadow-sm truncate">
+                  المكافأة اليومية
+                </h3>
+                {dailyAvailable ? (
+                  <span className="rounded-full bg-amber-400/25 border border-amber-300 px-2 py-0.5 text-[10px] font-black text-yellow-300 animate-pulse whitespace-nowrap shadow-sm">
+                    جاهزة للاستلام! 🎁
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-bold text-emerald-400 whitespace-nowrap">
+                    مُستلمة اليوم ✓
+                  </span>
+                )}
+              </div>
+              <p className="text-[0.72rem] text-ludo-gold/90 font-medium truncate mt-0.5">
+                {dailyAvailable
+                  ? "سجّل دخولك الآن واستلم قطع الذهب المجانية!"
+                  : "عُد غداً لليوم التالي لزيادة السلسلة والذهب الملكي"}
+              </p>
+            </div>
+          </div>
+          <span
+            className={cn(
+              "shrink-0 rounded-xl px-3.5 py-1.5 text-xs font-black shadow-md transition-all group-hover:scale-105",
+              dailyAvailable
+                ? "bg-gradient-to-b from-yellow-300 via-amber-400 to-amber-600 text-black border border-yellow-200 animate-golden-btn-pulse"
+                : "bg-gradient-to-b from-ludo-gold to-amber-600 text-ludo-deep",
+            )}
+          >
+            {dailyAvailable ? "استلام 🪙" : "معاينة"}
+          </span>
+        </button>
+
         {/* شبكة الأزرار الدائرية الملكية */}
         <div className="grid w-full grid-cols-4 gap-3 place-items-center">
           {[
@@ -1739,7 +2273,11 @@ function HomeScreen({
               type="button"
               onClick={() => {
                 sfx.tap();
-                navigate(item.id as Screen);
+                if (item.id === "rewards" && onOpenDailyReward) {
+                  onOpenDailyReward();
+                } else {
+                  navigate(item.id as Screen);
+                }
               }}
               className="relative flex aspect-square w-full max-w-[76px] flex-col items-center justify-center rounded-full border-2 border-ludo-gold/80 bg-gradient-to-b from-[#6b1652] via-[#3a082c] to-[#1a0214] p-1 shadow-[0_4px_12px_rgba(0,0,0,0.6),inset_0_1px_2px_rgba(255,215,0,0.4)] transition-all duration-150 active:scale-90 hover:border-ludo-gold hover:shadow-[0_0_15px_rgba(255,215,0,0.5)] touch-manipulation cursor-pointer z-10 select-none group"
               aria-label={item.label}
@@ -1748,6 +2286,12 @@ function HomeScreen({
                 <span className="absolute top-1 right-1 flex size-2.5">
                   <span className="absolute inline-flex size-full animate-ping rounded-full bg-red-400 opacity-75"></span>
                   <span className="relative inline-flex size-2.5 rounded-full bg-red-500 border border-white/80"></span>
+                </span>
+              )}
+              {item.id === "rewards" && dailyAvailable && (
+                <span className="absolute top-1 right-1 flex size-2.5">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-amber-400 opacity-80"></span>
+                  <span className="relative inline-flex size-2.5 rounded-full bg-amber-500 border border-white/80"></span>
                 </span>
               )}
               <img
@@ -1762,28 +2306,30 @@ function HomeScreen({
           ))}
         </div>
 
-        {/* زر تنزيل ملف الـ APK المباشر */}
-        <div className="w-full px-1 pt-1">
-          <button
-            onClick={() => navigate("apk")}
-            className="flex w-full items-center justify-between rounded-2xl border-2 border-ludo-gold/60 bg-gradient-to-r from-[#5a144e] via-[#31072a] to-[#160214] p-3 shadow-md transition active:scale-95 hover:border-ludo-gold"
-          >
-            <div className="flex items-center gap-2.5">
-              <div className="grid size-10 place-items-center rounded-xl bg-ludo-gold/20 text-ludo-gold border border-ludo-gold/50">
-                <Smartphone className="size-5 animate-pulse" />
+        {/* زر تنزيل ملف الـ APK المباشر — يظهر فقط للمسؤولين */}
+        {isAdmin && (
+          <div className="w-full px-1 pt-1">
+            <button
+              onClick={() => navigate("apk")}
+              className="flex w-full items-center justify-between rounded-2xl border-2 border-ludo-gold/60 bg-gradient-to-r from-[#5a144e] via-[#31072a] to-[#160214] p-3 shadow-md transition active:scale-95 hover:border-ludo-gold"
+            >
+              <div className="flex items-center gap-2.5">
+                <div className="grid size-10 place-items-center rounded-xl bg-ludo-gold/20 text-ludo-gold border border-ludo-gold/50">
+                  <Smartphone className="size-5 animate-pulse" />
+                </div>
+                <div className="text-right">
+                  <h4 className="text-sm font-black text-ludo-gold">تنزيل ملف الـ APK المباشر</h4>
+                  <p className="text-[10px] text-ludo-soft">
+                    لوحة المشرف: إدارة وتوزيع ملف اللعبة المباشر
+                  </p>
+                </div>
               </div>
-              <div className="text-right">
-                <h4 className="text-sm font-black text-ludo-gold">تنزيل ملف الـ APK المباشر</h4>
-                <p className="text-[10px] text-ludo-soft">
-                  تنزيل ملف اللعبة فوراً ومشاركته مع الأصدقاء
-                </p>
-              </div>
-            </div>
-            <span className="rounded-full bg-ludo-gold px-3 py-1 text-xs font-black text-ludo-deep shadow-sm">
-              تنزيل فوري 📥
-            </span>
-          </button>
-        </div>
+              <span className="rounded-full bg-ludo-gold px-3 py-1 text-xs font-black text-ludo-deep shadow-sm">
+                تنزيل فوري 📥
+              </span>
+            </button>
+          </div>
+        )}
 
         {isAdmin && (
           <div className="px-3 pt-3 w-full">
@@ -2099,6 +2645,7 @@ function BottomNav({ active, navigate }: { active: Screen; navigate: (s: Screen)
 }
 
 function GameScreen({
+  tournamentInfo,
   state,
   moves,
   rolling,
@@ -2114,6 +2661,9 @@ function GameScreen({
   meName,
   turnSeconds,
   chatContext,
+  chatBubbles,
+  incomingChatMessage,
+  onSendChatMessage,
   onMute,
   onRoll,
   onToken,
@@ -2121,6 +2671,12 @@ function GameScreen({
   onRules,
   onRestart,
 }: {
+  tournamentInfo?: {
+    name: string;
+    icon: string;
+    round: TournamentRound;
+    prizeGold: number;
+  } | null;
   state: GameState;
   moves: ReturnType<typeof legalMoves>;
   rolling: boolean;
@@ -2136,6 +2692,14 @@ function GameScreen({
   meName: string;
   turnSeconds: number;
   chatContext?: ChatContext | undefined;
+  chatBubbles: Record<number, ChatBubbleData>;
+  incomingChatMessage: ChatMessage | null;
+  onSendChatMessage: (msg: {
+    kind: "text" | "quick" | "emoji" | "voice";
+    text?: string;
+    audioUrl?: string;
+    seconds?: number;
+  }) => void;
   onMute: () => void;
   onRoll: () => void;
   onToken: (id: string) => void;
@@ -2224,13 +2788,39 @@ function GameScreen({
           </span>
         </div>
 
-        {/* مقاعد الخصوم أعلى اللوحة */}
-        <div className="mt-2 grid min-h-[5.6rem] grid-cols-2 items-end gap-2">
+        {/* شارة البطولة الحالية إذا كانت المباراة ضمن بطولة */}
+        {tournamentInfo && (
+          <div className="mt-2 mx-auto flex items-center gap-2 rounded-full border border-ludo-gold/70 bg-gradient-to-r from-amber-500/20 via-purple-950/70 to-amber-500/20 px-3.5 py-1 text-xs shadow-md">
+            <Trophy className="size-3.5 text-ludo-gold animate-bounce" />
+            <b className="text-ludo-gold font-black">{tournamentInfo.name}</b>
+            <span className="text-white/40">•</span>
+            <span className="text-cyan-300 font-bold">{getRoundName(tournamentInfo.round)}</span>
+            <span className="text-white/40">•</span>
+            <span className="text-amber-300 font-bold">🏆 {tournamentInfo.prizeGold.toLocaleString("ar-EG")} ذهب</span>
+          </div>
+        )}
+
+        {/* مقاعد الخصوم أعلى اللوحة مع مساحة رأسية لفقاعات الكلام */}
+        <div className="mt-5 sm:mt-6 grid min-h-[5.6rem] grid-cols-2 items-end gap-2">
           <div className="justify-self-start">
-            {topLeft && <RoomSeat state={state} seatId={topLeft.seat} align="start" />}
+            {topLeft && (
+              <RoomSeat
+                state={state}
+                seatId={topLeft.seat}
+                align="start"
+                bubble={chatBubbles[topLeft.seat]}
+              />
+            )}
           </div>
           <div className="justify-self-end">
-            {topRight && <RoomSeat state={state} seatId={topRight.seat} align="end" />}
+            {topRight && (
+              <RoomSeat
+                state={state}
+                seatId={topRight.seat}
+                align="end"
+                bubble={chatBubbles[topRight.seat]}
+              />
+            )}
           </div>
         </div>
 
@@ -2240,31 +2830,36 @@ function GameScreen({
 
         {/* أنا بالأسفل مع حلقة المؤقت والنرد، والخصم المقابل يمينًا */}
         <div className="mt-2 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
-          <div className="room-seat">
+          <div className="room-seat relative">
             <span className="room-name">{me.name}</span>
             <div className="flex items-center gap-2">
-              <span
-                className="room-ring"
-                style={{
-                  ["--seat" as string]: `var(--ludo-${SEATS[mySeat].token})`,
-                  ["--pct" as string]: pct,
-                }}
-              >
-                <span>
-                  {me.isBot ? (
-                    <Bot className="size-6 text-ludo-gold" />
-                  ) : (
-                    <img
-                      src={avatarTiger}
-                      alt=""
-                      width={512}
-                      height={512}
-                      loading="lazy"
-                      className="size-full object-cover"
-                    />
+              <div className="relative flex items-center justify-center">
+                {/* فقاعة المحادثة فوق رأس أفتار اللاعب (أنا) */}
+                <PlayerChatBubble bubble={chatBubbles[mySeat]} align="start" />
+                <span
+                  className={cn(
+                    "room-ring transition-all duration-300",
+                    chatBubbles[mySeat] &&
+                      "ring-2 ring-amber-400 shadow-[0_0_15px_rgba(255,215,0,0.6)] rounded-full",
                   )}
+                  style={{
+                    ["--seat" as string]: `var(--ludo-${SEATS[mySeat].token})`,
+                    ["--pct" as string]: pct,
+                  }}
+                >
+                  <span className="relative flex items-center justify-center">
+                    {me.isBot ? (
+                      <Bot className="size-6 text-ludo-gold" />
+                    ) : (
+                      <AvatarFrame
+                        frameId={profile?.frame || "frame_default"}
+                        avatar={profile?.avatar || "🦁"}
+                        size="sm"
+                      />
+                    )}
+                  </span>
                 </span>
-              </span>
+              </div>
               <span className="room-dice-bubble">
                 <Dice
                   value={state.dice}
@@ -2288,7 +2883,14 @@ function GameScreen({
           <div aria-hidden="true" />
 
           <div className="justify-self-end">
-            {bottomRight && <RoomSeat state={state} seatId={bottomRight.seat} align="end" />}
+            {bottomRight && (
+              <RoomSeat
+                state={state}
+                seatId={bottomRight.seat}
+                align="end"
+                bubble={chatBubbles[bottomRight.seat]}
+              />
+            )}
           </div>
         </div>
 
@@ -2361,38 +2963,62 @@ function GameScreen({
         onOpenChange={setChatOpen}
         tab={chatTab}
         hideFab
+        onSendMessage={onSendChatMessage}
+        incomingMessage={incomingChatMessage}
       />
       {celebrate && <Confetti />}
     </div>
   );
 }
 
-/** مقعد لاعب داخل الغرفة: صورة دائرية بإطار لونه لون المقعد + شريط الاسم */
+/** مقعد لاعب داخل الغرفة: صورة دائرية بإطار لونه لون المقعد + شريط الاسم + فقاعة محادثة فوق الرأس */
 function RoomSeat({
   state,
   seatId,
   align,
+  bubble,
 }: {
   state: GameState;
   seatId: 0 | 1 | 2 | 3;
   align: "start" | "end";
+  bubble?: ChatBubbleData | null;
 }) {
+  const { profile } = useAuth();
   const p = state.players.find((x) => x.seat === seatId);
   if (!p) return null;
   const s = SEATS[seatId];
   const active = currentPlayer(state).seat === seatId;
+
+  const isSelf = !p.isBot && (p.name === (profile?.display_name || "أنت") || seatId === 0);
+  const botFrames = [
+    "frame_royal_gold",
+    "frame_neon_cyan",
+    "frame_dragon_fire",
+    "frame_emerald_nature",
+  ];
+  const frameId = isSelf
+    ? profile?.frame || "frame_default"
+    : p.isBot
+      ? botFrames[seatId % botFrames.length]
+      : "frame_default";
+  const avatarContent = isSelf ? profile?.avatar || "🦁" : p.isBot ? "🤖" : "👑";
+
   return (
     <div
-      className={cn("room-seat", align === "end" ? "items-end" : "items-start")}
+      className={cn("room-seat relative", align === "end" ? "items-end" : "items-start")}
       style={{ ["--seat" as string]: `var(--ludo-${s.token})` }}
     >
-      <span className={cn("room-avatar", active && "room-avatar-active")}>
-        {p.isBot ? (
-          <Bot className="size-7 text-ludo-gold" />
-        ) : (
-          <Crown className="size-7 text-ludo-gold" />
+      {/* فقاعة المحادثة فوق رأس اللاعب */}
+      <PlayerChatBubble bubble={bubble} align={align} />
+      <span
+        className={cn(
+          "room-avatar relative flex items-center justify-center p-0.5 transition-all duration-300",
+          active && "room-avatar-active",
+          bubble && "ring-2 ring-amber-400 shadow-[0_0_15px_rgba(255,215,0,0.6)]",
         )}
-        <b className="absolute -top-1 -start-1 grid size-6 place-items-center rounded-full bg-ludo-panel/90 text-[10px] text-ludo-gold">
+      >
+        <AvatarFrame frameId={frameId} avatar={avatarContent} size="md" />
+        <b className="absolute -top-1 -start-1 z-20 grid size-6 place-items-center rounded-full bg-ludo-panel/90 text-[10px] text-ludo-gold shadow-md">
           {tokensDone(state, seatId)}
         </b>
       </span>

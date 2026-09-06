@@ -31,7 +31,7 @@ const EMOJIS = [
   "🫡",
 ];
 
-type ChatMessage = {
+export type ChatMessage = {
   id: string;
   mine: boolean;
   author: string;
@@ -77,6 +77,8 @@ export function MatchChat({
   onOpenChange,
   tab: tabProp,
   hideFab,
+  onSendMessage,
+  incomingMessage,
 }: {
   meName: string;
   context?: ChatContext | undefined;
@@ -85,6 +87,13 @@ export function MatchChat({
   onOpenChange?: (value: boolean) => void;
   tab?: Tab;
   hideFab?: boolean;
+  onSendMessage?: (msg: {
+    kind: "text" | "quick" | "emoji" | "voice";
+    text?: string;
+    audioUrl?: string;
+    seconds?: number;
+  }) => void;
+  incomingMessage?: ChatMessage | null;
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
   const open = openProp ?? internalOpen;
@@ -123,6 +132,16 @@ export function MatchChat({
     setNoise(loadNoiseReduction());
   }, []);
 
+  // دمج الرسائل الواردة من بقية اللاعبين في الغرفة
+  useEffect(() => {
+    if (!incomingMessage) return;
+    setMessages((prev) => {
+      if (prev.some((m) => m.id === incomingMessage.id)) return prev;
+      return [...prev.slice(-60), incomingMessage];
+    });
+    if (!incomingMessage.mine) setUnread((n) => n + 1);
+  }, [incomingMessage]);
+
   useEffect(() => {
     if (open) setUnread(0);
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
@@ -141,6 +160,7 @@ export function MatchChat({
     sfx.chat();
     haptics.tap();
     push({ mine: true, author: meName, kind, text });
+    onSendMessage?.({ kind, text });
     setDraft("");
   };
 
@@ -167,12 +187,18 @@ export function MatchChat({
         const blob = new Blob(chunks.current, { type: rec.mimeType || "audio/webm" });
         const url = URL.createObjectURL(blob);
         urls.current.push(url);
+        const sec = Math.max(1, Math.round((Date.now() - startedAt.current) / 1000));
         push({
           mine: true,
           author: meName,
           kind: "voice",
           audioUrl: url,
-          seconds: Math.max(1, Math.round((Date.now() - startedAt.current) / 1000)),
+          seconds: sec,
+        });
+        onSendMessage?.({
+          kind: "voice",
+          audioUrl: url,
+          seconds: sec,
         });
         stream.getTracks().forEach((t) => t.stop());
       };
@@ -210,22 +236,30 @@ export function MatchChat({
       )}
 
       {open && (
-        <section className="chat-panel glow-rise" dir="rtl" aria-label="دردشة المباراة">
-          <header className="chat-head">
-            <b>دردشة الغرفة</b>
-            <small className="flex-1">لا تؤثر على نتيجة اللعبة</small>
-            <button
-              type="button"
-              className="chat-close press-3d"
-              aria-label="إغلاق الدردشة"
-              onClick={() => {
-                setOpen(false);
-                sfx.tap();
-              }}
-            >
-              <X className="size-4" />
-            </button>
-          </header>
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/25 backdrop-blur-[1px]"
+            onClick={() => setOpen(false)}
+            aria-hidden="true"
+          />
+          <section className="chat-panel glow-rise" dir="rtl" aria-label="دردشة المباراة">
+            <header className="chat-head">
+              <span className="flex items-center gap-1 font-black text-xs text-ludo-gold">
+                <MessageSquare className="size-3.5 text-ludo-gold" /> دردشة الغرفة
+              </span>
+              <span className="text-[10px] text-ludo-soft/80 mr-1">سريعة وتفاعلية</span>
+              <button
+                type="button"
+                className="chat-close press-3d ml-auto"
+                aria-label="إغلاق الدردشة"
+                onClick={() => {
+                  setOpen(false);
+                  sfx.tap();
+                }}
+              >
+                <X className="size-3.5" />
+              </button>
+            </header>
 
           <div className="chat-list" ref={listRef}>
             {messages.length === 0 && (
@@ -420,7 +454,8 @@ export function MatchChat({
           {micError && (
             <p className="px-3 pb-2 text-center text-[11px] text-ludo-pink">{micError}</p>
           )}
-        </section>
+          </section>
+        </>
       )}
     </>
   );

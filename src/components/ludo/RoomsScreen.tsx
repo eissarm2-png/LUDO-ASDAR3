@@ -191,10 +191,12 @@ export function RoomsPanel({
       /* التخزين المحلي قد يكون معطّلًا */
     }
     launched.current = room.match_id;
-    const seatIndex = Math.max(
-      0,
-      members.findIndex((m) => m.user_id === meId),
-    );
+    const myMember = members.find((m) => m.user_id === meId);
+    const memberIndex = members.findIndex((m) => m.user_id === meId);
+    const seatIndex =
+      myMember && typeof myMember.seat === "number" && myMember.seat >= 0
+        ? myMember.seat
+        : Math.max(0, memberIndex);
     onLaunch({
       roomId: room.id,
       matchId: room.match_id,
@@ -210,7 +212,9 @@ export function RoomsPanel({
     try {
       await fn();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "تعذّر إكمال العملية");
+      const msg = e instanceof Error ? e.message : "تعذّر إكمال العملية";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
@@ -378,7 +382,13 @@ export function RoomsPanel({
           <div className="space-y-2">
             {members.map((m) => (
               <div className="list-card" key={m.id}>
-                <span className="avatar-orb bg-ludo-purple text-xl">{m.avatar}</span>
+                <span className="avatar-orb overflow-hidden bg-ludo-purple text-xl">
+                  {m.avatar && (m.avatar.startsWith("data:") || m.avatar.startsWith("http")) ? (
+                    <img src={m.avatar} alt="" className="size-full object-cover" />
+                  ) : (
+                    m.avatar || "👤"
+                  )}
+                </span>
                 <span className="min-w-0 flex-1">
                   <b className="flex items-center gap-1 truncate">
                     {m.display_name}
@@ -566,6 +576,7 @@ export function RoomsPanel({
         <Button variant="play" className="w-full" disabled={busy} onClick={() => void createRoom()}>
           <Plus /> أنشئ الغرفة
         </Button>
+        {error && <p className="mt-2 text-center text-xs text-ludo-pink">{error}</p>}
       </section>
 
       <section className="rounded-xl border border-ludo-gold/35 bg-ludo-panel/70 p-3">
